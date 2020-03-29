@@ -1,0 +1,37 @@
+OpenVR was initialized successfully..
+	Recommended size: (1508, 1676)
+	VSync: None
+	Projection matrix left  [ 0.7718,  0.0000, -0.1915,  0.0000]
+	                        [ 0.0000,  0.7098,  0.0022,  0.0000]
+	                        [ 0.0000,  0.0000, -1.0010, -0.1001]
+	                        [ 0.0000,  0.0000, -1.0000,  0.0000]
+	Projection matrix right [ 0.7715,  0.0000,  0.1860,  0.0000]
+	                        [ 0.0000,  0.7088,  0.0027,  0.0000]
+	                        [ 0.0000,  0.0000, -1.0010, -0.1001]
+	                        [ 0.0000,  0.0000, -1.0000,  0.0000]
+	Eye to head left [ 1.0000,  0.0000,  0.0000, -0.0315]
+	                 [ 0.0000,  1.0000,  0.0000,  0.0000]
+	                 [ 0.0000,  0.0000,  1.0000,  0.0000]
+	Poses [ 1.0000,  0.0000,  0.0000,  0.0000]
+	      [ 0.0000,  1.0000,  0.0000,  0.0000]
+	      [ 0.0000,  0.0000,  1.0000,  0.0000]
+	Distortion example
+		(11.7647, 11.5577) 		(-0.0539,  0.2248)
+		( 0.1750, -0.1368) 		( 0.3156,  0.3167)
+
+IVRCompositor was created
+	Is fullscreen = false
+	Vulkan Instance Extensions:
+		"VK_NV_external_memory_capabilities"
+		"VK_KHR_external_memory_capabilities"
+		"VK_KHR_get_physical_device_properties2"
+
+IVRChaperone was created
+	Calibration state: Error(Error)
+	Play area size: None
+	Play area rect: None
+	Are bounds visible = false
+
+Done! \o/
+
+Process finished with exit code 0

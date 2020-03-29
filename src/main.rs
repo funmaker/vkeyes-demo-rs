@@ -1,114 +1,83 @@
+mod openvr_vulkan;
 
-fn print_matrix<M, N>(offset: u32, mat: M)
-	where
-		M: AsRef<[N]>,
-		N: AsRef<[f32]>,
-{
-	let offset: String = (0..offset).map(|_| ' ').collect();
-	let mut is_first_row = true;
-	for row in mat.as_ref() {
-		if !is_first_row {
-			print!("{}", offset);
-		}
-		let row_interior: Vec<_> = row.as_ref().iter().map(|x| format!("{:7.4}", x)).collect();
-		println!("[{}]", row_interior.join(", "));
-		is_first_row = false;
-	}
-}
+use std::error::Error;
 
-fn main() {
-	let context = match unsafe { openvr::init(openvr::ApplicationType::Other) } {
-		Ok(ivr) => ivr,
-		Err(err) => {
-			println!("Failed to initialize openvr: {}", err);
-			return;
-		}
+use vulkano::{app_info_from_cargo_toml, VulkanObject};
+use vulkano::instance::{InstanceExtensions, RawInstanceExtensions, Instance};
+use vulkano::instance::debug::{MessageSeverity, MessageType, DebugCallback};
+
+use openvr_vulkan::OpenVRPtr;
+
+fn main() -> Result<(), Box<dyn Error>> {
+	let debug = true;
+	
+	let context = unsafe { openvr::init(openvr::ApplicationType::Scene) }?;
+	let system = context.system()?;
+	let chaperone = context.chaperone()?;
+	let compositor = context.compositor()?;
+	
+	let recommended_size = system.recommended_render_target_size();
+	
+	let instance = {
+		let app_infos = app_info_from_cargo_toml!();
+		let extensions = RawInstanceExtensions::new(compositor.vulkan_instance_extensions_required())
+		                                       .union(&(&InstanceExtensions { ext_debug_utils: debug,
+		                                                                      ..InstanceExtensions::none() }).into());
+		
+		let layers = if debug {
+			             vec!["VK_LAYER_LUNARG_standard_validation"]
+		             } else {
+			             vec![]
+		             };
+		
+		Instance::new(Some(&app_infos), extensions, layers)?
 	};
 	
-	println!("OpenVR was initialized successfully..");
-	
-	let system = match context.system() {
-		Ok(sys) => sys,
-		Err(err) => {
-			println!("Failed to get system interface: {}", err);
-			return;
-		}
-	};
-	
-	println!(
-		"\tRecommended size: {:?}",
-		system.recommended_render_target_size()
-	);
-	println!("\tVSync: {:?}", system.time_since_last_vsync());
-	
-	print!("\tProjection matrix left  ");
-	print_matrix(32, system.projection_matrix(openvr::Eye::Left, 0.1, 100.));
-	print!("\tProjection matrix right ");
-	print_matrix(32, system.projection_matrix(openvr::Eye::Right, 0.1, 100.));
-	
-	print!("\tEye to head left ");
-	print_matrix(25, system.eye_to_head_transform(openvr::Eye::Left));
-	
-	print!("\tPoses ");
-	let poses = system
-		.device_to_absolute_tracking_pose(openvr::TrackingUniverseOrigin::RawAndUncalibrated, 0.0);
-	for pose in poses.iter() {
-		print_matrix(8 + 6, pose.device_to_absolute_tracking());
-		break;
+	if debug {
+		let severity = MessageSeverity { error:       true,
+		                                 warning:     true,
+		                                 information: false,
+		                                 verbose:     true, };
+		
+		let ty = MessageType::all();
+		
+		let _debug_callback = DebugCallback::new(&instance, severity, ty, |msg| {
+			                                         let severity = if msg.severity.error {
+				                                         "error"
+			                                         } else if msg.severity.warning {
+				                                         "warning"
+			                                         } else if msg.severity.information {
+				                                         "information"
+			                                         } else if msg.severity.verbose {
+				                                         "verbose"
+			                                         } else {
+				                                         panic!("no-impl");
+			                                         };
+			                                         
+			                                         let ty = if msg.ty.general {
+				                                         "general"
+			                                         } else if msg.ty.validation {
+				                                         "validation"
+			                                         } else if msg.ty.performance {
+				                                         "performance"
+			                                         } else {
+				                                         panic!("no-impl");
+			                                         };
+			                                         
+			                                         println!("{} {} {}: {}",
+			                                                  msg.layer_prefix,
+			                                                  ty,
+			                                                  severity,
+			                                                  msg.description);
+		                                         });
 	}
 	
-	println!("\tDistortion example");
-	for u in 0..2 {
-		for v in 0..2 {
-			let pos = system
-				.compute_distortion(openvr::Eye::Left, u as f32 / 4., v as f32 / 4.)
-				.unwrap();
-			print!("\t\t({:7.4}, {:7.4}) ", pos.red[0], pos.red[1]);
-		}
-		println!();
-	}
+	let physical = system.vulkan_output_device(instance.as_ptr())
+	                     .map()
+	                     .or_else(|| {
+		                     println!("Failed to fetch device from openvr, fallback to the first one");
+		                     
+	                     });
 	
-	let comp = match context.compositor() {
-		Ok(ext) => ext,
-		Err(err) => {
-			println!("Failed to create IVRCompositor subsystem: {}", err);
-			return;
-		}
-	};
-	println!();
-	
-	println!("IVRCompositor was created");
-	println!("\tIs fullscreen = {}", comp.is_fullscreen());
-	println!("\tVulkan Instance Extensions:");
-	for ext in comp.vulkan_instance_extensions_required() {
-		println!("\t\t{:?}", ext);
-	}
-	println!();
-	
-	println!("IVRChaperone was created");
-	let chaperone = match context.chaperone() {
-		Ok(sys) => sys,
-		Err(err) => {
-			println!("Failed to get chaperone interface: {}", err);
-			return;
-		}
-	};
-	println!(
-		"\tCalibration state: {:?}",
-		chaperone.get_calibration_state()
-	);
-	println!("\tPlay area size: {:?}", chaperone.get_play_area_size());
-	print!("\tPlay area rect: ");
-	if let Some(play_area_rect) = chaperone.get_play_area_rect() {
-		print_matrix(24, &play_area_rect);
-	} else {
-		println!("None");
-	}
-	println!(
-		"\tAre bounds visible = {:?}",
-		chaperone.are_bounds_visible()
-	);
-	println!();
-	
-	println!("Done! \\o/");
+	Ok(())
 }
