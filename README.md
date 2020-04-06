@@ -1,5 +1,7 @@
-# Project39-ar
-Project39 - AR Character Experience Simulator The Game
+# vkeyes-demo-rs
+Simple OpenVR+Vulkano demo with a twist. Use analog sticks to rotate your eyes independently.
+
+Enjoy.
 
 ## Acknowledgments
 
