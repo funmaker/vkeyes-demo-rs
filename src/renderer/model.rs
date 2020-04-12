@@ -5,22 +5,23 @@ use err_derive::Error;
 use image::{DynamicImage, GenericImageView};
 use vulkano::buffer::{ImmutableBuffer, BufferUsage};
 use vulkano::image::{ImmutableImage, Dimensions, ImageCreationError};
-use vulkano::sync::{GpuFuture, FenceSignalFuture, FlushError};
+use vulkano::sync::{GpuFuture, FlushError, FenceSignalFuture};
 use vulkano::format::Format;
 use vulkano::memory::DeviceMemoryAllocError;
 use vulkano::sampler::Sampler;
-use vulkano::descriptor::descriptor_set::{DescriptorSet, PersistentDescriptorSet};
+use vulkano::descriptor::descriptor_set::{DescriptorSet, PersistentDescriptorSet, PersistentDescriptorSetError, PersistentDescriptorSetBuildError};
+use vulkano::descriptor::PipelineLayoutAbstract;
+use arc_swap::ArcSwap;
 
 use crate::models::Vertex;
 use crate::renderer::Renderer;
-use vulkano::descriptor::PipelineLayoutAbstract;
 
 #[derive(Clone)]
 pub struct Model {
 	pub buffer: Arc<ImmutableBuffer<[Vertex]>>,
 	pub image: Arc<ImmutableImage<Format>>,
-	pub set: Arc<dyn DescriptorSet>,
-	fence: Box<dyn AbstractFenceCheck>,
+	pub set: Arc<dyn DescriptorSet + Send + Sync>,
+	fence: ArcSwap<FenceCheck>,
 }
 
 impl Model {
@@ -41,12 +42,12 @@ impl Model {
 		let sampler = Sampler::simple_repeat_linear_no_mipmap(queue.device().clone());
 		
 		let set = Arc::new(
-			PersistentDescriptorSet::start(renderer.pipeline.descriptor_set_layout()?.clone())
+			PersistentDescriptorSet::start(renderer.pipeline.descriptor_set_layout(0).ok_or(ModelError::NoLayout)?.clone())
 			                        .add_sampled_image(image.clone(), sampler.clone())?
 			                        .build()?
 		);
 		
-		let fence = Box::new(FenceCheck::Pending(buffer_promise.join(image_promise).then_signal_fence_and_flush()?)) as Box<dyn AbstractFenceCheck>;
+		let fence = ArcSwap::new(Arc::new(FenceCheck::new(buffer_promise.join(image_promise))?));
 		
 		Ok(Model {
 			buffer,
@@ -56,34 +57,19 @@ impl Model {
 		})
 	}
 	
-	pub fn loaded(&mut self) -> bool {
-		self.fence.loaded()
-	}
-}
-
-enum FenceCheck<GF: GpuFuture> {
-	Done(bool),
-	Pending(FenceSignalFuture<GF>)
-}
-
-trait AbstractFenceCheck {
-	fn loaded(&mut self) -> bool;
-}
-
-impl<GF: GpuFuture> AbstractFenceCheck for FenceCheck<GF> {
-	fn loaded(&mut self) -> bool {
-		match self {
+	pub fn loaded(&self) -> bool {
+		match &**self.fence.load() {
 			FenceCheck::Done(result) => *result,
 			FenceCheck::Pending(fence) => {
 				match fence.wait(Some(Duration::new(0, 0))) {
 					Err(FlushError::Timeout) => false,
 					Ok(()) => {
-						std::mem::replace(self, FenceCheck::Done(true));
+						self.fence.swap(Arc::new(FenceCheck::Done(true)));
 						true
 					}
 					Err(err) => {
 						eprintln!("Error while loading model: {:?}", err);
-						std::mem::replace(self, FenceCheck::Done(false));
+						self.fence.swap(Arc::new(FenceCheck::Done(false)));
 						false
 					}
 				}
@@ -92,9 +78,26 @@ impl<GF: GpuFuture> AbstractFenceCheck for FenceCheck<GF> {
 	}
 }
 
+enum FenceCheck {
+	Done(bool),
+	Pending(FenceSignalFuture<Box<dyn GpuFuture>>)
+}
+
+impl FenceCheck {
+	fn new<GF>(future: GF)
+	          -> Result<FenceCheck, FlushError>
+	          where GF: GpuFuture + 'static {
+		Ok(FenceCheck::Pending((Box::new(future) as Box<dyn GpuFuture>).then_signal_fence_and_flush()?))
+	}
+}
+
+
 #[derive(Debug, Error)]
 pub enum ModelError {
+	#[error(display = "Pipeline doesn't have layout set 0")] NoLayout,
 	#[error(display = "{}", _0)] DeviceMemoryAllocError(#[error(source)] DeviceMemoryAllocError),
 	#[error(display = "{}", _0)] ImageCreationError(#[error(source)] ImageCreationError),
 	#[error(display = "{}", _0)] FlushError(#[error(source)] FlushError),
+	#[error(display = "{}", _0)] PersistentDescriptorSetError(#[error(source)] PersistentDescriptorSetError),
+	#[error(display = "{}", _0)] PersistentDescriptorSetBuildError(#[error(source)] PersistentDescriptorSetBuildError),
 }

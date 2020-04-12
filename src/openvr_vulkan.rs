@@ -4,9 +4,15 @@ use openvr::{VkInstance_T, VkPhysicalDevice_T, Compositor, VkDevice_T, VkQueue_T
 use std::ffi::CString;
 use vulkano::device::{Device, Queue};
 use vulkano::image::{AttachmentImage, ImageAccess};
+use cgmath::{Matrix4, Matrix};
 
 pub fn vulkan_device_extensions_required(compositor: &Compositor, physical: &PhysicalDevice) -> Vec<CString> {
 	unsafe { compositor.vulkan_device_extensions_required(physical.as_ptr()) }
+}
+
+pub fn mat4(val: &[[f32; 4]; 3]) -> Matrix4<f32> {
+	let mat: Matrix4<f32> = [val[0], val[1], val[2], [0.0, 0.0, 0.0, 1.0]].into();
+	mat.transpose()
 }
 
 pub trait OpenVRPtr {

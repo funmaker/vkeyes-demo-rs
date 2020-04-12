@@ -5,24 +5,33 @@ use vulkano::{app_info_from_cargo_toml, OomError};
 use vulkano::device::{Device, DeviceExtensions, RawDeviceExtensions, Features, Queue, DeviceCreationError};
 use vulkano::instance::debug::{DebugCallback, MessageSeverity, MessageType};
 use vulkano::instance::{Instance, InstanceExtensions, RawInstanceExtensions, PhysicalDevice, LayersListError, InstanceCreationError};
-use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract, GraphicsPipelineCreationError};
+use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineCreationError};
 use vulkano::sync;
 use vulkano::sync::{GpuFuture, FlushError};
 use vulkano::pipeline::viewport::Viewport;
-use vulkano::framebuffer::{Subpass, RenderPassCreationError};
+use vulkano::framebuffer::{Subpass, RenderPassCreationError, RenderPassAbstract};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState, BeginRenderPassError, DrawError, AutoCommandBufferBuilderContextError, BuildError, CommandBufferExecError};
+use vulkano::format::ClearValue;
 use openvr::{System, Compositor};
+use cgmath::{Matrix4, Transform, Matrix};
+use openvr::compositor::CompositorError;
 
 pub mod model;
 mod eye;
 
 use crate::shaders;
 use crate::openvr_vulkan::*;
-use eye::Eye;
 use crate::renderer::eye::EyeCreationError;
-use cgmath::Matrix4;
 use crate::renderer::model::Model;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
-use vulkano::format::ClearValue;
+use crate::models::Vertex;
+use eye::Eye;
+
+// workaround https://github.com/vulkano-rs/vulkano/issues/709
+type PipelineType = GraphicsPipeline<
+	vulkano::pipeline::vertex::SingleBufferDefinition<Vertex>,
+	std::boxed::Box<dyn vulkano::descriptor::pipeline_layout::PipelineLayoutAbstract + Send + Sync>,
+	std::sync::Arc<dyn RenderPassAbstract + Send + Sync>
+>;
 
 pub struct Renderer {
 	pub instance: Arc<Instance>,
@@ -30,13 +39,22 @@ pub struct Renderer {
 	device: Arc<Device>,
 	queue: Arc<Queue>,
 	load_queue: Arc<Queue>,
-	pipeline: Arc<dyn GraphicsPipelineAbstract>,
+	pipeline: Arc<PipelineType>,
 	eyes: (Eye, Eye),
+	compositor: Compositor,
 	previous_frame_end: Option<Box<dyn GpuFuture>>,
 }
 
+// Translates OpenGL projection matrix to Vulkan
+const CLIP: Matrix4<f32> = Matrix4::new(
+	1.0, 0.0, 0.0, 0.0,
+	0.0,-1.0, 0.0, 0.0,
+	0.0, 0.0, 0.5, 0.0,
+	0.0, 0.0, 0.5, 1.0,
+);
+
 impl Renderer {
-	pub fn new(system: &System, compositor: &Compositor, device: Option<usize>, debug: bool) -> Result<Renderer, RendererCreationError> {
+	pub fn new(system: &System, compositor: Compositor, device: Option<usize>, debug: bool) -> Result<Renderer, RendererCreationError> {
 		let recommended_size = system.recommended_render_target_size();
 		
 		if debug {
@@ -192,14 +210,23 @@ impl Renderer {
 			                                            depth_range: 0.0 .. 1.0 }))
 			                 .fragment_shader(fs.main_entry_point(), ())
 			                 .depth_stencil_simple_depth()
-			                 .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+			                 .render_pass(Subpass::from(render_pass.clone() as Arc<dyn RenderPassAbstract + Send + Sync>, 0).unwrap())
 			                 .build(device.clone())?
 		);
 		
-		let eyes = (
-			Eye::new(recommended_size, &queue, &render_pass)?,
-			Eye::new(recommended_size, &queue, &render_pass)?,
-		);
+		let eyes = {
+			let proj_left : Matrix4<f32> = CLIP
+			                             * Matrix4::from(system.projection_matrix(openvr::Eye::Left,  0.1, 1000.1)).transpose()
+			                             * mat4(&system.eye_to_head_transform(openvr::Eye::Left )).inverse_transform().unwrap();
+			let proj_right: Matrix4<f32> = CLIP
+			                             * Matrix4::from(system.projection_matrix(openvr::Eye::Right, 0.1, 1000.1)).transpose()
+			                             * mat4(&system.eye_to_head_transform(openvr::Eye::Right)).inverse_transform().unwrap();
+			
+			(
+				Eye::new(recommended_size, proj_left,  &queue, &render_pass)?,
+				Eye::new(recommended_size, proj_right, &queue, &render_pass)?,
+			)
+		};
 		
 		let previous_frame_end = Some(Box::new(sync::now(device.clone())) as Box<_>);
 		
@@ -210,12 +237,16 @@ impl Renderer {
 			load_queue,
 			pipeline,
 			eyes,
+			compositor,
 			previous_frame_end,
 		})
 	}
 	
-	pub fn render(&mut self, compositor: &Compositor, hmd_pose: &[[f32; 4]; 3], left_pv: Matrix4<f32>, right_pv: Matrix4<f32>, scene: &mut [(Model, Matrix4<f32>)]) -> Result<(), RenderError> {
+	pub fn render(&mut self, hmd_pose: &[[f32; 4]; 3], scene: &mut [(Model, Matrix4<f32>)]) -> Result<(), RenderError> {
 		self.previous_frame_end.as_mut().unwrap().cleanup_finished();
+		
+		let left_pv  = self.eyes.0.projection * mat4(hmd_pose).inverse_transform().unwrap();
+		let right_pv = self.eyes.1.projection * mat4(hmd_pose).inverse_transform().unwrap();
 		
 		let mut command_buffer = AutoCommandBufferBuilder::new(self.device.clone(), self.queue.family())?
 		                                                  .begin_render_pass(self.eyes.0.frame_buffer.clone(),
@@ -223,13 +254,13 @@ impl Renderer {
 		                                                                     vec![ [0.5, 0.5, 0.5, 1.0].into(),
 		                                                                           ClearValue::Depth(1.0) ])?;
 		
-		for (model, matrix) in scene {
+		for (model, matrix) in scene.iter_mut() {
 			if !model.loaded() { continue };
 			command_buffer = command_buffer.draw(self.pipeline.clone(),
 			                                     &DynamicState::none(),
-			                                     vec![model.buffer.clone()],
+			                                     model.buffer.clone(),
 			                                     model.set.clone(),
-			                                     left_pv * matrix)?;
+			                                     left_pv * *matrix)?;
 		}
 		
 		command_buffer = command_buffer.end_render_pass()?
@@ -238,13 +269,13 @@ impl Renderer {
 		                                                  vec![ [0.5, 0.5, 0.5, 1.0].into(),
 		                                                        ClearValue::Depth(1.0) ])?;
 		
-		for (model, matrix) in scene {
+		for (model, matrix) in scene.iter_mut() {
 			if !model.loaded() { continue };
 			command_buffer = command_buffer.draw(self.pipeline.clone(),
 			                                     &DynamicState::none(),
-			                                     vec![model.buffer.clone()],
+			                                     model.buffer.clone(),
 			                                     model.set.clone(),
-			                                     right_pv * matrix)?;
+			                                     right_pv * *matrix)?;
 		}
 		
 		let command_buffer = command_buffer.end_render_pass()?
@@ -255,8 +286,8 @@ impl Renderer {
 		                                    .then_execute(self.queue.clone(), command_buffer)?;
 		
 		unsafe {
-			compositor.submit(Eye::Left,  &self.eyes.0.texture, None, Some(hmd_pose.clone()))?;
-			compositor.submit(Eye::Right, &self.eyes.1.texture, None, Some(hmd_pose.clone()))?;
+			self.compositor.submit(openvr::Eye::Left,  &self.eyes.0.texture, None, Some(hmd_pose.clone()))?;
+			self.compositor.submit(openvr::Eye::Right, &self.eyes.1.texture, None, Some(hmd_pose.clone()))?;
 		}
 		
 		let future = future.then_signal_fence_and_flush();
@@ -293,4 +324,11 @@ pub enum RendererCreationError {
 #[derive(Debug, Error)]
 pub enum RenderError {
 	#[error(display = "{}", _0)] OomError(#[error(source)] OomError),
+	#[error(display = "{}", _0)] BeginRenderPassError(#[error(source)] BeginRenderPassError),
+	#[error(display = "{}", _0)] DrawError(#[error(source)] DrawError),
+	#[error(display = "{}", _0)] AutoCommandBufferBuilderContextError(#[error(source)] AutoCommandBufferBuilderContextError),
+	#[error(display = "{}", _0)] BuildError(#[error(source)] BuildError),
+	#[error(display = "{}", _0)] CommandBufferExecError(#[error(source)] CommandBufferExecError),
+	#[error(display = "{}", _0)] CompositorError(#[error(source)] CompositorError),
+	#[error(display = "{}", _0)] FlushError(#[error(source)] FlushError),
 }
