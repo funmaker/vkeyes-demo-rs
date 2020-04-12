@@ -9,10 +9,10 @@ use vulkano::sync::{GpuFuture, FlushError};
 use vulkano::sync;
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::framebuffer::{Subpass, RenderPassCreationError, RenderPassAbstract};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState, BeginRenderPassError, DrawError, AutoCommandBufferBuilderContextError, BuildError, CommandBufferExecError};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState, BeginRenderPassError, AutoCommandBufferBuilderContextError, BuildError, CommandBufferExecError, DrawIndexedError};
 use vulkano::format::ClearValue;
 use openvr::{System, Compositor};
-use cgmath::{Matrix4, Transform, Matrix};
+use cgmath::{Matrix4, Transform, Matrix, Vector2, Euler, Rad};
 use openvr::compositor::CompositorError;
 
 pub mod model;
@@ -240,11 +240,20 @@ impl Renderer {
 		})
 	}
 	
-	pub fn render(&mut self, hmd_pose: &[[f32; 4]; 3], scene: &mut [(Model, Matrix4<f32>)]) -> Result<(), RenderError> {
+	pub fn render(&mut self, hmd_pose: &[[f32; 4]; 3], eye_rotation: (Vector2<f32>, Vector2<f32>), scene: &mut [(Model, Matrix4<f32>)]) -> Result<(), RenderError> {
 		self.previous_frame_end.as_mut().unwrap().cleanup_finished();
 		
-		let left_pv  = self.eyes.0.projection * mat4(hmd_pose).inverse_transform().unwrap();
-		let right_pv = self.eyes.1.projection * mat4(hmd_pose).inverse_transform().unwrap();
+		let left_pv = self.eyes.0.projection
+		            * Matrix4::from(Euler { x: Rad(eye_rotation.0.x),
+		                                    y: Rad(eye_rotation.0.y),
+		                                    z: Rad(0.0) })
+		            * mat4(hmd_pose).inverse_transform().unwrap();
+		
+		let right_pv = self.eyes.1.projection
+		             * Matrix4::from(Euler { x: Rad(eye_rotation.1.x),
+		                                     y: Rad(eye_rotation.1.y),
+		                                     z: Rad(0.0) })
+		             * mat4(hmd_pose).inverse_transform().unwrap();
 		
 		let mut command_buffer = AutoCommandBufferBuilder::new(self.device.clone(), self.queue.family())?
 		                                                  .begin_render_pass(self.eyes.0.frame_buffer.clone(),
@@ -254,11 +263,12 @@ impl Renderer {
 		
 		for (model, matrix) in scene.iter_mut() {
 			if !model.loaded() { continue };
-			command_buffer = command_buffer.draw(self.pipeline.clone(),
-			                                     &DynamicState::none(),
-			                                     model.buffer.clone(),
-			                                     model.set.clone(),
-			                                     left_pv * *matrix)?;
+			command_buffer = command_buffer.draw_indexed(self.pipeline.clone(),
+			                                             &DynamicState::none(),
+			                                             model.vertices.clone(),
+			                                             model.indices.clone(),
+			                                             model.set.clone(),
+			                                             left_pv * *matrix)?;
 		}
 		
 		command_buffer = command_buffer.end_render_pass()?
@@ -269,11 +279,12 @@ impl Renderer {
 		
 		for (model, matrix) in scene.iter_mut() {
 			if !model.loaded() { continue };
-			command_buffer = command_buffer.draw(self.pipeline.clone(),
-			                                     &DynamicState::none(),
-			                                     model.buffer.clone(),
-			                                     model.set.clone(),
-			                                     right_pv * *matrix)?;
+			command_buffer = command_buffer.draw_indexed(self.pipeline.clone(),
+			                                             &DynamicState::none(),
+			                                             model.vertices.clone(),
+			                                             model.indices.clone(),
+			                                             model.set.clone(),
+			                                             right_pv * *matrix)?;
 		}
 		
 		let command_buffer = command_buffer.end_render_pass()?
@@ -323,7 +334,7 @@ pub enum RendererCreationError {
 pub enum RenderError {
 	#[error(display = "{}", _0)] OomError(#[error(source)] OomError),
 	#[error(display = "{}", _0)] BeginRenderPassError(#[error(source)] BeginRenderPassError),
-	#[error(display = "{}", _0)] DrawError(#[error(source)] DrawError),
+	#[error(display = "{}", _0)] DrawIndexedError(#[error(source)] DrawIndexedError),
 	#[error(display = "{}", _0)] AutoCommandBufferBuilderContextError(#[error(source)] AutoCommandBufferBuilderContextError),
 	#[error(display = "{}", _0)] BuildError(#[error(source)] BuildError),
 	#[error(display = "{}", _0)] CommandBufferExecError(#[error(source)] CommandBufferExecError),

@@ -13,44 +13,35 @@ use vulkano::descriptor::PipelineLayoutAbstract;
 use arc_swap::ArcSwap;
 
 use crate::renderer::Renderer;
+use obj::TexturedVertex;
+use openvr::render_models;
 
-#[derive(Default, Copy, Clone)]
-pub struct Vertex {
-	pos: [f32; 3],
-	uv: [f32; 2],
-}
-
-vulkano::impl_vertex!(Vertex, pos, uv);
-
-impl Vertex {
-	pub const fn new(x: f32, y: f32, z: f32, u: f32, v: f32) -> Self {
-		Vertex {
-			pos: [x, y, z],
-			uv: [u, v],
-		}
-	}
-}
 
 pub const SCENE_OBJ: &[u8] = include_bytes!("../../assets/scene.obj");
 pub const SCENE_PNG: &[u8] = include_bytes!("../../assets/scene.png");
 
 #[derive(Clone)]
 pub struct Model {
-	pub buffer: Arc<ImmutableBuffer<[Vertex]>>,
+	pub vertices: Arc<ImmutableBuffer<[Vertex]>>,
+	pub indices: Arc<ImmutableBuffer<[u16]>>,
 	pub image: Arc<ImmutableImage<Format>>,
 	pub set: Arc<dyn DescriptorSet + Send + Sync>,
 	fence: ArcSwap<FenceCheck>,
 }
 
 impl Model {
-	pub fn new(vertexes: &[Vertex], source_image: DynamicImage, renderer: &Renderer) -> Result<Model, ModelError> {
+	pub fn new(vertices: &[Vertex], indices: &[u16], source_image: DynamicImage, renderer: &Renderer) -> Result<Model, ModelError> {
 		let width = source_image.width();
 		let height = source_image.height();
 		let queue = &renderer.load_queue;
 		
-		let (buffer, buffer_promise) = ImmutableBuffer::from_iter(vertexes.iter().cloned(),
-		                                                          BufferUsage{ vertex_buffer: true, ..BufferUsage::none() },
-		                                                          queue.clone())?;
+		let (vertices, vertices_promise) = ImmutableBuffer::from_iter(vertices.iter().cloned(),
+		                                                              BufferUsage{ vertex_buffer: true, ..BufferUsage::none() },
+		                                                              queue.clone())?;
+		
+		let (indices, indices_promise) = ImmutableBuffer::from_iter(indices.iter().cloned(),
+		                                                            BufferUsage{ index_buffer: true, ..BufferUsage::none() },
+		                                                            queue.clone())?;
 		
 		let (image, image_promise) = ImmutableImage::from_iter(source_image.to_rgba().into_vec().into_iter(),
 		                                                       Dimensions::Dim2d{ width, height },
@@ -65,10 +56,11 @@ impl Model {
 			                        .build()?
 		);
 		
-		let fence = ArcSwap::new(Arc::new(FenceCheck::new(buffer_promise.join(image_promise))?));
+		let fence = ArcSwap::new(Arc::new(FenceCheck::new(vertices_promise.join(indices_promise).join(image_promise))?));
 		
 		Ok(Model {
-			buffer,
+			vertices,
+			indices,
 			image,
 			set,
 			fence,
@@ -118,4 +110,46 @@ pub enum ModelError {
 	#[error(display = "{}", _0)] FlushError(#[error(source)] FlushError),
 	#[error(display = "{}", _0)] PersistentDescriptorSetError(#[error(source)] PersistentDescriptorSetError),
 	#[error(display = "{}", _0)] PersistentDescriptorSetBuildError(#[error(source)] PersistentDescriptorSetBuildError),
+}
+
+
+#[derive(Default, Copy, Clone)]
+pub struct Vertex {
+	pos: [f32; 3],
+	uv: [f32; 2],
+}
+
+vulkano::impl_vertex!(Vertex, pos, uv);
+
+impl Vertex {
+	pub const fn new(x: f32, y: f32, z: f32, u: f32, v: f32) -> Self {
+		Vertex {
+			pos: [x, y, z],
+			uv: [u, v],
+		}
+	}
+}
+
+impl From<&TexturedVertex> for Vertex {
+	fn from(vertex: &TexturedVertex) -> Self {
+		Vertex::new(
+			vertex.position[0],
+			vertex.position[1],
+			vertex.position[2],
+			vertex.texture[0],
+			1.0 - vertex.texture[1],
+		)
+	}
+}
+
+impl From<&render_models::Vertex> for Vertex {
+	fn from(vertex: &render_models::Vertex) -> Self {
+		Vertex::new(
+			vertex.position[0],
+			vertex.position[1],
+			vertex.position[2],
+			vertex.texture_coord[0],
+			vertex.texture_coord[1],
+		)
+	}
 }

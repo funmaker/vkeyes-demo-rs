@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use err_derive::Error;
-use openvr::{System, Compositor, RenderModels, Context, InitError, tracked_device_index, TrackedDeviceClass, render_models};
+use openvr::{System, Compositor, RenderModels, Context, InitError, tracked_device_index, TrackedDeviceClass, render_models, TrackedControllerRole};
 use openvr::compositor::CompositorError;
 use openvr::system::TrackedPropertyError;
 use image::{ImageError, DynamicImage, ImageBuffer};
 use obj::{load_obj, ObjError, TexturedVertex, Obj};
-use cgmath::Matrix4;
+use cgmath::{Matrix4, Vector2};
 
 use crate::renderer::{Renderer, RendererCreationError, RenderError, model};
 use crate::renderer::model::{Model, ModelError, Vertex};
@@ -41,25 +41,18 @@ impl Application {
 		let mut scene = Vec::new();
 		
 		{
-			let obj: Obj<TexturedVertex, usize> = load_obj(model::SCENE_OBJ)?;
-			let verticles = obj.indices.iter()
-			                           .map(|&i| Vertex::new(
-				                           obj.vertices[i].position[0],
-				                           obj.vertices[i].position[1],
-				                           obj.vertices[i].position[2],
-				                           obj.vertices[i].texture[0],
-				                           1.0 - obj.vertices[i].texture[1],
-			                           ))
-			                           .collect::<Vec<Vertex>>();
+			let obj: Obj<TexturedVertex, u16> = load_obj(model::SCENE_OBJ)?;
+			
+			let vertices: Vec<Vertex> = obj.vertices.iter().map(Into::into).collect();
 			let image = image::load_from_memory(model::SCENE_PNG)?;
-			let model = Model::new(&verticles, image, &self.renderer)?;
-			scene.push((model, Matrix4::new(0.035, 0.0, 0.0, 0.0,
-			                                0.0, 0.035, 0.0, 0.0,
-			                                0.0, 0.0, 0.035, 0.0,
-			                                0.0, 0.0, 0.0, 1.0)));
+			
+			let model = Model::new(&vertices, &obj.indices, image, &self.renderer)?;
+			
+			scene.push((model, Matrix4::from_scale(0.035)));
 		}
 		
 		let mut devices: HashMap<u32, usize> = HashMap::new();
+		let mut eye_rotation = (Vector2::new(0.0, 0.0), Vector2::new(0.0, 0.0));
 		
 		loop {
 			let poses = self.compositor.wait_get_poses()?;
@@ -71,22 +64,12 @@ impl Application {
 						scene[*devices.get(&i).unwrap()].1 = mat4(poses.render[i as usize].device_to_absolute_tracking());
 					} else if let Some(model) = self.render_models.load_render_model(&self.system.string_tracked_device_property(i, 1003)?)? {
 						if let Some(texture) = self.render_models.load_texture(model.diffuse_texture_id().unwrap())? {
-							let raw_verts = model.vertices();
-							let verticles = model.indices()
-							                     .iter()
-							                     .map(|&i| Vertex::new(
-								                     raw_verts[i as usize].position[0],
-								                     raw_verts[i as usize].position[1],
-								                     raw_verts[i as usize].position[2],
-								                     raw_verts[i as usize].texture_coord[0],
-								                     raw_verts[i as usize].texture_coord[1],
-							                     ))
-							                     .collect::<Vec<Vertex>>();
-							
+							let vertices: Vec<Vertex> = model.vertices().iter().map(Into::into).collect();
+							let indices = model.indices();
 							let size = texture.dimensions();
 							let image = DynamicImage::ImageRgba8(ImageBuffer::from_raw(size.0 as u32, size.1 as u32, texture.data().into()).unwrap());
 							
-							let model = Model::new(&verticles, image, &self.renderer)?;
+							let model = Model::new(&vertices, indices, image, &self.renderer)?;
 							
 							devices.insert(i, scene.len());
 							scene.push((model, mat4(poses.render[i as usize].device_to_absolute_tracking())));
@@ -96,9 +79,21 @@ impl Application {
 				}
 			}
 			
+			if let Some(i) = self.system.tracked_device_index_for_controller_role(TrackedControllerRole::LeftHand) {
+				if let Some(state) = self.system.controller_state(i) {
+					eye_rotation.0 += Vector2::new(-state.axis[0].y, state.axis[0].x) / 100.0;
+				}
+			}
+
+			if let Some(i) = self.system.tracked_device_index_for_controller_role(TrackedControllerRole::RightHand) {
+				if let Some(state) = self.system.controller_state(i) {
+					eye_rotation.1 += Vector2::new(-state.axis[0].y, state.axis[0].x) / 100.0;
+				}
+			}
+			
 			let pose = poses.render[tracked_device_index::HMD as usize].device_to_absolute_tracking();
 			
-			self.renderer.render(pose, &mut scene)?;
+			self.renderer.render(pose, eye_rotation, &mut scene)?;
 		}
 		
 		// Ok(())
