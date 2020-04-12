@@ -1,13 +1,12 @@
 use std::sync::Arc;
-
 use err_derive::Error;
 use vulkano::{app_info_from_cargo_toml, OomError};
 use vulkano::device::{Device, DeviceExtensions, RawDeviceExtensions, Features, Queue, DeviceCreationError};
 use vulkano::instance::debug::{DebugCallback, MessageSeverity, MessageType};
 use vulkano::instance::{Instance, InstanceExtensions, RawInstanceExtensions, PhysicalDevice, LayersListError, InstanceCreationError};
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineCreationError};
-use vulkano::sync;
 use vulkano::sync::{GpuFuture, FlushError};
+use vulkano::sync;
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::framebuffer::{Subpass, RenderPassCreationError, RenderPassAbstract};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState, BeginRenderPassError, DrawError, AutoCommandBufferBuilderContextError, BuildError, CommandBufferExecError};
@@ -23,12 +22,11 @@ use crate::shaders;
 use crate::openvr_vulkan::*;
 use crate::renderer::eye::EyeCreationError;
 use crate::renderer::model::Model;
-use crate::models::Vertex;
 use eye::Eye;
 
 // workaround https://github.com/vulkano-rs/vulkano/issues/709
 type PipelineType = GraphicsPipeline<
-	vulkano::pipeline::vertex::SingleBufferDefinition<Vertex>,
+	vulkano::pipeline::vertex::SingleBufferDefinition<model::Vertex>,
 	std::boxed::Box<dyn vulkano::descriptor::pipeline_layout::PipelineLayoutAbstract + Send + Sync>,
 	std::sync::Arc<dyn RenderPassAbstract + Send + Sync>
 >;
@@ -203,7 +201,7 @@ impl Renderer {
 		
 		let pipeline = Arc::new(
 			GraphicsPipeline::start()
-			                 .vertex_input_single_buffer::<crate::models::Vertex>()
+			                 .vertex_input_single_buffer::<model::Vertex>()
 			                 .vertex_shader(vs.main_entry_point(), ())
 			                 .viewports(Some(Viewport { origin: [0.0, 0.0],
 			                                            dimensions: [recommended_size.0 as f32, recommended_size.1 as f32],

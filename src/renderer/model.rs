@@ -1,6 +1,5 @@
 use std::sync::Arc;
 use std::time::Duration;
-
 use err_derive::Error;
 use image::{DynamicImage, GenericImageView};
 use vulkano::buffer::{ImmutableBuffer, BufferUsage};
@@ -13,8 +12,27 @@ use vulkano::descriptor::descriptor_set::{DescriptorSet, PersistentDescriptorSet
 use vulkano::descriptor::PipelineLayoutAbstract;
 use arc_swap::ArcSwap;
 
-use crate::models::Vertex;
 use crate::renderer::Renderer;
+
+#[derive(Default, Copy, Clone)]
+pub struct Vertex {
+	pos: [f32; 3],
+	uv: [f32; 2],
+}
+
+vulkano::impl_vertex!(Vertex, pos, uv);
+
+impl Vertex {
+	pub const fn new(x: f32, y: f32, z: f32, u: f32, v: f32) -> Self {
+		Vertex {
+			pos: [x, y, z],
+			uv: [u, v],
+		}
+	}
+}
+
+pub const SCENE_OBJ: &[u8] = include_bytes!("../../assets/scene.obj");
+pub const SCENE_PNG: &[u8] = include_bytes!("../../assets/scene.png");
 
 #[derive(Clone)]
 pub struct Model {

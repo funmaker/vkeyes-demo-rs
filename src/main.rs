@@ -1,13 +1,10 @@
-#![allow(dead_code)]
 use std::error::Error;
 use std::env;
-
 use getopts::Options;
 
 mod shaders;
 mod renderer;
 mod application;
-mod models;
 mod openvr_vulkan;
 
 use application::Application;

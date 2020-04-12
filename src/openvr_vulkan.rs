@@ -1,9 +1,9 @@
+use std::ffi::CString;
 use vulkano::instance::{Instance, PhysicalDevice};
 use vulkano::{VulkanObject, SynchronizedVulkanObject};
-use openvr::{VkInstance_T, VkPhysicalDevice_T, Compositor, VkDevice_T, VkQueue_T};
-use std::ffi::CString;
 use vulkano::device::{Device, Queue};
 use vulkano::image::{AttachmentImage, ImageAccess};
+use openvr::{VkInstance_T, VkPhysicalDevice_T, Compositor, VkDevice_T, VkQueue_T};
 use cgmath::{Matrix4, Matrix};
 
 pub fn vulkan_device_extensions_required(compositor: &Compositor, physical: &PhysicalDevice) -> Vec<CString> {

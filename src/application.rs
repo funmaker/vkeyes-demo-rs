@@ -1,28 +1,23 @@
-use openvr::{System, Compositor, RenderModels, Chaperone, Context, InitError, tracked_device_index, TrackedDeviceClass, render_models};
+use std::collections::HashMap;
 use err_derive::Error;
+use openvr::{System, Compositor, RenderModels, Context, InitError, tracked_device_index, TrackedDeviceClass, render_models};
+use openvr::compositor::CompositorError;
+use openvr::system::TrackedPropertyError;
 use image::{ImageError, DynamicImage, ImageBuffer};
+use obj::{load_obj, ObjError, TexturedVertex, Obj};
 use cgmath::Matrix4;
 
-use crate::renderer::{Renderer, RendererCreationError, RenderError};
-use crate::renderer::model::{Model, ModelError};
-use crate::models;
-use crate::models::Vertex;
+use crate::renderer::{Renderer, RendererCreationError, RenderError, model};
+use crate::renderer::model::{Model, ModelError, Vertex};
 use crate::openvr_vulkan::mat4;
-use openvr::compositor::CompositorError;
-use std::collections::HashMap;
-use openvr::system::TrackedPropertyError;
-use obj::{load_obj, ObjError, TexturedVertex, Obj};
 
 pub struct Application {
 	context: Context,
 	system: System,
 	compositor: Compositor,
 	render_models: RenderModels,
-	chaperone: Chaperone,
 	renderer: Renderer,
 }
-
-const SIZE: i32 = 5;
 
 impl Application {
 	pub fn new(device: Option<usize>, debug: bool) -> Result<Application, ApplicationCreationError> {
@@ -30,7 +25,6 @@ impl Application {
 		let system = context.system()?;
 		let compositor = context.compositor()?;
 		let render_models = context.render_models()?;
-		let chaperone = context.chaperone()?;
 		
 		let renderer = Renderer::new(&system, context.compositor()?, device, debug)?;
 		
@@ -39,28 +33,15 @@ impl Application {
 			system,
 			compositor,
 			render_models,
-			chaperone,
 			renderer,
 		})
 	}
 	
 	pub fn run(mut self) -> Result<(), ApplicationRunError> {
-		let image = image::load_from_memory(include_bytes!("../assets/cube_texture.png"))?;
-		let cube = Model::new(&models::CUBE, image, &self.renderer)?;
-		
-		let mut scene: Vec<(Model, Matrix4<f32>)> = (0 .. SIZE * SIZE * SIZE).map(|i| {
-			let x = (i % SIZE - SIZE/2) as f32 * 3.0;
-			let y = (i / SIZE % SIZE - SIZE/2) as f32 * 3.0;
-			let z = (i / SIZE / SIZE % SIZE - SIZE/2) as f32 * 3.0;
-			
-			(cube.clone(), Matrix4::new(0.2, 0.0, 0.0, 0.0,
-			                            0.0, 0.2, 0.0, 0.0,
-			                            0.0, 0.0, 0.2, 0.0,
-			                              x,   y,   z, 1.0))
-		}).collect();
+		let mut scene = Vec::new();
 		
 		{
-			let obj: Obj<TexturedVertex, usize> = load_obj(&include_bytes!("../assets/scene.obj")[..])?;
+			let obj: Obj<TexturedVertex, usize> = load_obj(model::SCENE_OBJ)?;
 			let verticles = obj.indices.iter()
 			                           .map(|&i| Vertex::new(
 				                           obj.vertices[i].position[0],
@@ -70,7 +51,7 @@ impl Application {
 				                           1.0 - obj.vertices[i].texture[1],
 			                           ))
 			                           .collect::<Vec<Vertex>>();
-			let image = image::load_from_memory(include_bytes!("../assets/scene.png"))?;
+			let image = image::load_from_memory(model::SCENE_PNG)?;
 			let model = Model::new(&verticles, image, &self.renderer)?;
 			scene.push((model, Matrix4::new(0.035, 0.0, 0.0, 0.0,
 			                                0.0, 0.035, 0.0, 0.0,

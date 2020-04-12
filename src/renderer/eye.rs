@@ -2,11 +2,11 @@ use std::sync::Arc;
 use err_derive::Error;
 use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, FramebufferCreationError, RenderPassAbstract};
 use vulkano::image::{AttachmentImage, ImageUsage, ImageAccess, ImageCreationError};
-use vulkano::format;
 use vulkano::format::Format;
+use vulkano::format;
 use vulkano::device::Queue;
-use openvr::compositor::Texture;
 use openvr::compositor::texture::{vulkan, Handle, ColorSpace};
+use openvr::compositor::Texture;
 use cgmath::Matrix4;
 
 use crate::openvr_vulkan::OpenVRPtr;
